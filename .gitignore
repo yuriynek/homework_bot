@@ -150,3 +150,5 @@ static/
 posts/static/
 media/
 
+# files for checking API work
+api_praktikum.py
