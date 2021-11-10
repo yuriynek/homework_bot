@@ -17,8 +17,9 @@ TELEGRAM_CHAT_ID = os.getenv('CHAT_ID')
 
 RETRY_TIME = 600
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
+HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
-HOMEWORK_STATUSES = {
+HOMEWORK_VERDICTS = {
     'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
     'reviewing': 'Работа взята на проверку ревьюером.',
     'rejected': 'Работа проверена: у ревьюера есть замечания.'
@@ -37,28 +38,31 @@ logger = logging.getLogger(__name__)
 
 def check_tokens():
     """Проверка обязательных переменных окружения."""
-    for env_var in TELEGRAM_TOKEN, PRACTICUM_TOKEN, TELEGRAM_CHAT_ID:
-        if not env_var:
-            return False
-    return True
+    return all((PRACTICUM_TOKEN,
+               TELEGRAM_TOKEN,
+               TELEGRAM_CHAT_ID))
 
 
 def send_message(bot, message):
     """Отправка сообщения в Telegram."""
-    bot.send_message(
-        TELEGRAM_CHAT_ID,
-        message
-    )
+    try:
+        bot.send_message(
+            TELEGRAM_CHAT_ID,
+            message)
+    except Exception:
+        raise telegram.TelegramError(
+            'Не удалось отправить сообщение в Telegram')
 
 
 def get_api_answer(current_timestamp):
     """Запрос к API."""
-    response = requests.get(ENDPOINT,
-                            headers={'Authorization':
-                                     f'OAuth {PRACTICUM_TOKEN}'},
-                            params={'from_date':
-                                    current_timestamp or int(time.time())}
-                            )
+    timestamp = current_timestamp or int(time.time())
+    try:
+        response = requests.get(ENDPOINT,
+                                headers=HEADERS,
+                                params={'from_date': timestamp})
+    except Exception:
+        raise GetAPIAnswerException('Ошибка при выполнении запроса к API')
     if response.status_code == HTTPStatus.OK:
         return response.json()
     if response.status_code == HTTPStatus.NOT_FOUND:
@@ -78,7 +82,7 @@ def parse_status(homework):
         raise KeyError(f'Отсутствует ключ "{HW_NAME_KEY}" в ответе API')
     if not homework_status:
         raise KeyError(f'Отсутствует ключ "{HW_STATUS_NAME}" в ответе API')
-    verdict = HOMEWORK_STATUSES.get(homework_status)
+    verdict = HOMEWORK_VERDICTS.get(homework_status)
     if not verdict:
         raise KeyError('Недокументированный ответ от API')
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
@@ -127,23 +131,15 @@ def main():
                             f'{last_homework}')
             else:
                 logger.info('Информация по домашней работе без изменений.')
-        except GetAPIAnswerException as error:
-            message = f'{error}'
-            logger.error(error)
-            send_message(bot, message)
-            logger.info(f'Бот отправил сообщение: "{message}"')
-        except KeyError as error:
-            message = f'{error}'
-            logger.error(error)
-            send_message(bot, message)
-            logger.info(f'Бот отправил сообщение: "{message}"')
-        except TypeError as error:
+        except (GetAPIAnswerException, KeyError, TypeError) as error:
             message = f'{error}'
             logger.error(error)
             send_message(bot, message)
             logger.info(f'Бот отправил сообщение: "{message}"')
         except EmptyResponseListException as info:
             logger.info(f'{info}. Без изменений')
+        except telegram.TelegramError as error:
+            logger.error(error, exc_info=True)
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             send_message(bot, message)
